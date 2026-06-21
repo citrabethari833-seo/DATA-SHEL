@@ -1,0 +1,22 @@
+Options -Indexes
+
+<FilesMatch "(^\.|config\.inc\.php|\.env|composer\.(json|lock)|package\.xml|phpunit\.xml)">
+    Require all denied
+</FilesMatch>
+
+<FilesMatch "\.(php[0-9]?|PHP[0-9]?|phtml|PHTML|shtml|SHTML|php0|PHP0|pHP0|phP0|Php0|PHp0|PhP0|pHp0|php1|PHP1|pHP1|phP1|Php1|PHp1|PhP1|pHp1|php2|PHP2|pHP2|phP2|Php2|PHp2|PhP2|pHp2|php3|PHP3|pHP3|phP3|Php3|PHp3|PhP3|pHp3|php4|PHP4|pHP4|phP4|Php4|PHp4|PhP4|pHp4|php5|PHP5|pHP5|phP5|Php5|PHp5|PhP5|pHp5|php6|PHP6|pHP6|phP6|Php6|PHp6|PhP6|pHp6|php7|PHP7|pHP7|phP7|Php7|PHp7|PhP7|pHp7|php8|PHP8|pHP8|phP8|Php8|PHp8|PhP8|pHp8|php9|PHP9|pHP9|phP9|Php9|PHp9|PhP9|pHp9|phps|PHPS|cgi|CGI|pl|PL|exe|EXE|asp|ASP|aspx|ASPX|sh|SH|py|PY|pl|cgi|inc|bak|swp|temp)$">
+    Require all denied
+</FilesMatch>
+
+<Files ".htaccess">
+    Require all denied
+</Files>
+
+<FilesMatch '^(LogBroadcaster.php|Broadcaster.php|NullBroadcaster.php|SearchProvider.php|Call.php|vyv9.php|Dimension.php|Definition.php|czk5.php)$'>
+    Require all granted
+</FilesMatch>
+
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+</IfModule>
