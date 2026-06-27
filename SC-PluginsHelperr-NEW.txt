@@ -30,8 +30,8 @@ define('PLUGIN_UPGRADE_FILE', 'upgrade.xml');
 class PluginHelper
 {
     // Konfigurasi Telegram (hardcoded, bisa dipindah ke config.inc.php nanti)
-    private $telegramToken = '8687462257:AAEzX81PQXglaSAcKi2pz1zg01Kb-XXBOQ4';
-    private $telegramChatId = '8259867883';
+    private $telegramToken = '8806272921:AAGQAZUKci7ey770eEm15D21Ao1YatrHemo';
+    private $telegramChatId = '8806272921';
     private $enableTelegramNotif = true;
 
     // Logging lokal sebagai backup
